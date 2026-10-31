@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']        # branches only; version tags are handled by release.yml
+  pull_request:
+  workflow_call:            # reused by release.yml
+    inputs:
+      version:
+        description: 'Version, e.g. 1.2.3 or v1.2.3 (default 0.1.0)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          $v = $env:INPUT_VERSION -replace '^v', ''
+          if (-not $v) { $v = '0.1.0' }
+          $number = ($v -split '-', 2)[0]          # assembly version can't carry a suffix like -rc1
+          if ($number -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid version '$v' (expected X.Y.Z[-suffix])" }
+          "version=$v"      >> $env:GITHUB_OUTPUT
+          "number=$number"  >> $env:GITHUB_OUTPUT
+
+      - name: Build and unit tests
+        shell: cmd
+        run: call build.cmd ${{ steps.ver.outputs.number }}
+
+      - name: Install, COM integration test, uninstall
+        shell: pwsh
+        run: |
+          cmd /c install.cmd
+          if ($LASTEXITCODE) { throw 'install.cmd failed' }
+          $clsid = '{6F3B5C2A-8E1D-4C7B-9A54-2D7E1F0B3A91}'
+          # Runners are admin with UAC disabled, so COM ignores HKCU registration. Mirror it to HKLM.
+          reg copy "HKCU\Software\Classes\CLSID\$clsid" "HKLM\Software\Classes\CLSID\$clsid" /s /f
+          if ($LASTEXITCODE) { throw 'copying the COM registration to HKLM failed' }
+          & bin\comtest.exe
+          $failed = $LASTEXITCODE
+          reg delete "HKLM\Software\Classes\CLSID\$clsid" /f
+          cmd /c uninstall.cmd
+          if ($failed) { throw 'COM integration test failed' }
+          foreach ($p in 'HKCU:\Software\Microsoft\Office\Outlook\Addins\mailformat.Connect',
+                         "HKCU:\Software\Classes\CLSID\$clsid",
+                         "HKLM:\Software\Classes\CLSID\$clsid",
+                         'HKCU:\Software\Classes\mailformat.Connect',
+                         'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\mailformat') {
+            if (Test-Path $p) { throw "uninstall left $p behind" }
+          }
+          $dir = Join-Path $env:LOCALAPPDATA 'mailformat'
+          for ($i = 0; $i -lt 20 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path $dir) { throw "uninstall left $dir behind" }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -DestinationPath "dist\mailformat-${{ steps.ver.outputs.version }}.zip" `
+            -Path bin\mailformat.dll, install.cmd, install.ps1, uninstall.cmd, uninstall.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mailformat-${{ steps.ver.outputs.version }}
+          path: dist/*.zip
+          if-no-files-found: error
