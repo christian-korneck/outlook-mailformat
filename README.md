@@ -9,7 +9,7 @@ A small COM add-in (C#, no deps).
 ## Install
 
 Download `mailformat-<version>.zip` from [releases](https://github.com/christian-korneck/outlook-mailformat/releases/latest) and extract it. Close
-Outlook and run `install.cmd`. Works on amd64 and arm64 Windows.
+Outlook and run `install.cmd` (as regular user, non-elevated). Works on amd64 and arm64 Windows.
 
 Installation is per user (no admin privs required, target dir is in the user profile: `%LOCALAPPDATA%\mailformat`).
 
@@ -28,7 +28,7 @@ Features:
 
 ## Build and install from source
 
-Close Outlook, then run `build.cmd` and `install.cmd` (or run it from a prompt).
+Close Outlook, then run `build.cmd` and `install.cmd`.
 
 It builds and copies the add-in to `%LOCALAPPDATA%\mailformat` and registers the add-in from there for
 the current user.
